@@ -1,3 +1,8 @@
 gradio
 gradio[oauth]
 requests
+google-genai
+google-generativeai
+googlesearch-python
+pycountry
+python-dotenv
