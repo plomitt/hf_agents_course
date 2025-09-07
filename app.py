@@ -64,7 +64,11 @@ def run_and_submit_all( profile: gr.OAuthProfile | None):
     results_log = []
     answers_payload = []
     print(f"Running agent on {len(questions_data)} questions...")
+    counter = 1
     for item in questions_data:
+        print(f"Processing question {counter}/{len(questions_data)}")
+        counter += 1
+
         task_id = item.get("task_id")
         question_text = item.get("question")
         if not task_id or question_text is None:
