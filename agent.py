@@ -14,7 +14,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 openrouter_api_key = os.environ.get("OPENROUTER_API_KEY")
-openrouter_model_id = "google/gemini-2.0-flash-lite-001"
+# openrouter_model_id = "google/gemini-2.5-flash-lite"
+openrouter_model_id = "openrouter/sonoma-sky-alpha"
 
 media_agent = Agent(
     model=OpenRouter(
@@ -25,10 +26,18 @@ media_agent = Agent(
     reasoning=True,
     system_message=(
         "You are a concise media description assistant. "
-        "When the user provides or references media in his question, analyze the media and return its description/explaination/answer to the question. "
+        "When the user provides or references media in his question, analyze the media and return its description/explaination that will be helpful to answer the question. "
         "Explain what the media is about. "
         "Also include any text content or important/relevant information/facts that are present in the media. "
-        "Always limit the final answer to a single paragraph, or, if possible and reasonable, to a sigle sentence. "
+        "If the media is an image, describe its visual content. "
+        "If the media is an audio, transcribe its spoken content and summarize any important sounds. "
+        "If the media is a video, summarize its visual and audio content. "
+        "If the media is a code file, rewrite it in plain text. "
+        "If the media is a spreadsheet, rewrite its tabular content in plain text, using ASCII characters. "
+        "If the media is a text file, summarize its main points. "
+        "Do not answer the question yet, just describe/explain the media content. "
+        "Do include any information/facts that are present in the media that may be useful to answer the question. "
+        "Always limit the final answer to a reasonable length. "
         "If you don't know, reply 'idk', do not try to make up an answer. "
     )
 )
@@ -36,6 +45,9 @@ media_agent = Agent(
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".tiff"}
 AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".flac", ".ogg"}
 VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".avi", ".webm"}
+CODE_EXTS = {".py", ".js", ".json", ".html", ".css", ".java", ".c", ".cpp", ".cs", ".rb", ".go", ".rs", ".ts"}
+SPREADSHEET_EXTS = {".xlsx", ".xls", ".csv", ".tsv"}
+TEXT_EXTS = {".txt", ".md", ".pdf", ".docx"}
 
 def _detect_media_type(path: str) -> str:
     ext = pathlib.Path(path).suffix.lower()
@@ -45,22 +57,34 @@ def _detect_media_type(path: str) -> str:
         return "audio"
     if ext in VIDEO_EXTS:
         return "video"
+    if ext in CODE_EXTS:
+        return "code"
+    if ext in SPREADSHEET_EXTS:
+        return "spreadsheet"
+    if ext in TEXT_EXTS:
+        return "text"
 
     return "file"
 
 def _call_media_agent(media_type, media_path, prompt):
-    if media_type == 'image':
-        return media_agent.run(prompt, images=[Image(filepath=media_path)])
-    if media_type == 'audio':
-        return media_agent.run(prompt, audio=[Audio(filepath=media_path)])
-    if media_type == 'video':
-        return media_agent.run(prompt, videos=[Video(filepath=media_path)])
+    images=[Image(filepath=media_path)] if media_type == 'image' else None
+    audio=[Audio(filepath=media_path)] if media_type == 'audio' else None
+    videos=[Video(filepath=media_path)] if media_type == 'video' else None
+    files=[File(filepath=media_path)] if media_type not in {'image', 'audio', 'video'} else None
 
-    return media_agent.run(prompt, files=[File(filepath=media_path)])
+
+    # print(f"Calling media_agent with prompt: {prompt}")
+    # print(f"Calling media_agent with media_type: {media_type}")
+    # print(f"with images: {images}")
+    # print(f"with audio: {audio}")
+    # print(f"with videos: {videos}")
+    # print(f"with files: {files}")
+
+    return media_agent.run(prompt, images=images, audio=audio, videos=videos, files=files)
 
 
 def MediaProcessingTool(media_path: str = "", question: str = "") -> str:
-    """Use this tool to process local media files (image, audio, and video).
+    """Use this tool to process local media files (image, audio, video, code, spreadsheet, text).
     
     Args:
         media_path: local path.
@@ -79,7 +103,7 @@ def MediaProcessingTool(media_path: str = "", question: str = "") -> str:
     media_type = _detect_media_type(media_path)
 
     # Build the prompt for media_agent using the convention your media_agent expects:
-    prompt = question if question else f"Describe the content of this {media_type} in a single paragraph or sentence."
+    prompt = f"Describe the content of this {media_type}, including information relevant to the following user question. " + question
 
     # Call media_agent; return its content
     resp = _call_media_agent(media_type, media_path, prompt)
@@ -100,13 +124,15 @@ reasoning_agent = Agent(
     reasoning=True,
     system_message=(
         "You are a concise assistant that uses tools to answer questions."
-        "Before answering any question, first think step by step about what tools you should use to find the answer."
+        "Before answering any question, first think deeply and step by step about what tools you should use to find the answer."
         "Use the 'GoogleSearchTools' tool to find relevant information."
         "ALWAYS USE 'GoogleSearchTools' when the user asks about current events, recent news, or anything that may have changed in the last 2 years."
         "Use the 'MediaProcessingTool' tool to get information about any media files: such as an image, audio or video."
-        "ALWAYS USE 'MediaProcessingTool' when the user provides or references an image, audio or video files in his question."
-        "DO NOT USE 'MediaProcessingTool' for text files such as .csv, .xlsx, .pdf, .docx, .py, .js, .json, .txt, .md, .html, .xml, etc."
-        "If the referenced file is a text file, such as .py or .xlsx, process it yourself without using 'MediaProcessingTool'."
+        "ALWAYS USE 'MediaProcessingTool' when the user provides or references an image, audio, video, code, or spreadsheet files in his question."
+        "IMPORTANT: currrently video cannot be processed due to system limitations, so if the user provides a video, reply 'can't process video'."
+        "After calling the tools, reason step by step about the information you get from the tools, and how it relates to the question, then formulate your final answer."
+        "Do not just copy and paste the content from the tools; instead, synthesize the information to provide a concise and accurate answer."
+        "Reason step by step about the information you get from the tools, and how it relates to the question, then formulate your final answer."
         "Always answer in the shortest possible form:"
         "a single number, a single word, or at most a few words."
         "Never explain or elaborate unless explicitly asked."
@@ -176,10 +202,10 @@ class BasicAgent:
 
 # --- Example Calls ---
 
-agent_1 = BasicAgent()
-media_path = Path(__file__).parent.joinpath("media_files/7bd855d8-463d-4ed5-93ca-5fe35145f733.xlsx")
-answer = agent_1("The attached Excel file contains the sales of menu items for a local fast-food chain. What were the total sales that the chain made from food (not including drinks)? Express your answer in USD with two decimal places.", media_path=str(media_path))
-print(answer)
+# agent_1 = BasicAgent()
+# media_path = Path(__file__).parent.joinpath("media_files/7bd855d8-463d-4ed5-93ca-5fe35145f733.csv")
+# answer = agent_1("The attached Excel file contains the sales of menu items for a local fast-food chain. What were the total sales that the chain made from food (not including drinks)? Express your answer in USD with two decimal places.", media_path=str(media_path))
+# print(answer)
 
 # reasoning_agent.print_response("Media: image=/Volumes/Crucial/programming/hf_agents_course/fa1/temp/image.png | Question: What color is the hair of the character in the image?")
 

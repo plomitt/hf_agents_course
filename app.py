@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 import gradio as gr
 import requests
 import inspect
@@ -9,6 +10,36 @@ from agent import BasicAgent
 # (Keep Constants as is)
 # --- Constants ---
 DEFAULT_API_URL = "https://agents-course-unit4-scoring.hf.space"
+
+def get_file_path(file_id: str) -> Path:
+    """
+    Returns the absolute path to a file in the 'media_files' directory.
+
+    The file name is assumed to be of the format '<file_id>.*', and there's always
+    only one such file.
+
+    Args:
+        file_id: The ID of the file (e.g., '123').
+
+    Returns:
+        The absolute Path object for the file.
+    """
+    media_files_dir = Path(__file__).parent / 'media_files'
+    
+    # Use glob to find the file whose name contains the ID
+    matching_files = list(media_files_dir.glob(f'{file_id}.*'))
+
+    if not matching_files:
+        print(f"WARNING: No file found with ID '{file_id}' in '{media_files_dir}'")
+        return None
+
+    if len(matching_files) > 1:
+        print(f"WARNING: Multiple files found for ID '{file_id}': {matching_files}")
+        return None
+    
+    print(f"Found file: {matching_files[0]}")
+
+    return matching_files[0]
 
 def run_and_submit_all( profile: gr.OAuthProfile | None):
     """
@@ -71,11 +102,16 @@ def run_and_submit_all( profile: gr.OAuthProfile | None):
 
         task_id = item.get("task_id")
         question_text = item.get("question")
+        file_name = item.get("file_name")
         if not task_id or question_text is None:
             print(f"Skipping item with missing task_id or question: {item}")
             continue
         try:
-            submitted_answer = agent(question_text)
+            media_path = None
+            if 'https' in question_text or '.' in file_name:
+                media_path = get_file_path(task_id)
+
+            submitted_answer = agent(question_text, media_path)
             answers_payload.append({"task_id": task_id, "submitted_answer": submitted_answer})
             results_log.append({"Task ID": task_id, "Question": question_text, "Submitted Answer": submitted_answer})
         except Exception as e:
