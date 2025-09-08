@@ -2,6 +2,7 @@ import os
 from os import getenv
 from pathlib import Path
 import pathlib
+import time
 from agno.agent import Agent, RunResponse
 from agno.models.openai.like import OpenAILike
 from agno.tools.googlesearch import GoogleSearchTools
@@ -58,10 +59,8 @@ def _call_media_agent(media_type, media_path, prompt):
     return media_agent.run(prompt, files=[File(filepath=media_path)])
 
 
-def MediaProcessing(media_path: str = "", question: str = "") -> str:
-    """Use this tool to process local media files (image, audio, video, other files).
-    Forwards media+question to media_agent in the appropriate format.
-    Returns a short single-paragraph or single-sentence description/explaination or/and answer to the question.
+def MediaProcessingTool(media_path: str = "", question: str = "") -> str:
+    """Use this tool to process local media files (image, audio, and video).
     
     Args:
         media_path: local path.
@@ -70,23 +69,22 @@ def MediaProcessing(media_path: str = "", question: str = "") -> str:
     Returns:
         str: description/explaination/answer in a single paragraph/sentence, or 'idk' if not known, or 'file not found' if the file doesn't exist.
     """
+
     if not media_path or not pathlib.Path(media_path).exists():
         return 'file not found'
+    
+    media_path = str(media_path)
+    print(f"MediaProcessing received media_path: {media_path}")
 
     media_type = _detect_media_type(media_path)
 
     # Build the prompt for media_agent using the convention your media_agent expects:
-    # prompt = f"Media: {media_type}={media_path} | Question: {question}"
     prompt = question if question else f"Describe the content of this {media_type} in a single paragraph or sentence."
 
     # Call media_agent; return its content
     resp = _call_media_agent(media_type, media_path, prompt)
-    print(f"MediaProcessing got response: {resp}")
-    # resp may be an object with .content; handle that:
-    result = getattr(resp, "content", None)
-    if result is None:
-        # Fallback to string conversion
-        return str(resp) or "idk"
+    result = resp.content
+    print(f"MediaProcessing got response: {result}")
 
     return result
 
@@ -98,29 +96,64 @@ reasoning_agent = Agent(
         reasoning_effort="high",
         temperature=0.05,
     ),
-    tools=[GoogleSearchTools(), MediaProcessing()],
+    tools=[GoogleSearchTools(), MediaProcessingTool],
     reasoning=True,
     system_message=(
-        "You are a concise assistant."
-        "Before answering any question, first think step by step about what tools you can use to find the answer."
+        "You are a concise assistant that uses tools to answer questions."
+        "Before answering any question, first think step by step about what tools you should use to find the answer."
         "Use the 'GoogleSearchTools' tool to find relevant information."
-        "If the question asks to analyze any media, such as an image, audio or video, or other files, use 'MediaProcessing' tool."
+        "ALWAYS USE 'GoogleSearchTools' when the user asks about current events, recent news, or anything that may have changed in the last 2 years."
+        "Use the 'MediaProcessingTool' tool to get information about any media files: such as an image, audio or video."
+        "ALWAYS USE 'MediaProcessingTool' when the user provides or references an image, audio or video files in his question."
+        "DO NOT USE 'MediaProcessingTool' for text files such as .csv, .xlsx, .pdf, .docx, .py, .js, .json, .txt, .md, .html, .xml, etc."
+        "If the referenced file is a text file, such as .py or .xlsx, process it yourself without using 'MediaProcessingTool'."
         "Always answer in the shortest possible form:"
         "a single number, a single word, or at most a few words."
         "Never explain or elaborate unless explicitly asked."
+        "Omit punctuation at the end of sentences/words, and omit any units unless explicitly asked."
         "If you don't know, reply 'idk', do not try to make up an answer. "
     )
 )
 
-# reasoning_agent.print_response("Aalyze the image: https://huggingface.co/datasets/hf-internal-testing/fixtures_image/resolve/main/flower.png")
+def _handle_paused_run(agent: Agent, prompt: str) -> str:
+    print(f"Agent input: {prompt}")
 
-# image_path = Path(__file__).parent.joinpath("temp/image.png")
-# reasoning_agent.print_response(
-#     "Explain the content of the image in a single sentence. If there's text in the image, include it in your answer."
-# )
+    start = time.time()
+    run_response = agent.run(prompt)
 
-# print(image_path)
-# print(type(image_path))
+    # Set a counter for the loop depth
+    loop_count = 0
+    loop_limit = 3
+
+    # Loop until the agent run is no longer paused or the loop depth is reached
+    while run_response.is_paused and loop_count < loop_limit:
+        print(f"Agent run is paused. Handling tool call {loop_count + 1}...")
+        
+        # Iterate through tool calls and confirm them
+        for tool in run_response.tools:
+            if tool.requires_confirmation:
+                tool.confirmed = True
+                
+        # Continue the agent's run with the confirmed tool call
+        run_response = agent.continue_run()
+        loop_count += 1
+
+    end = time.time()
+        
+    if not run_response.is_paused:
+        # The agent successfully completed the task
+        final_response = run_response
+        final_response_content = final_response.content
+
+        print(f"Agent processing time: {end - start:.2f} seconds")
+        print(f"Agent loop amount: {loop_count + 1}")
+        print(f"Agent returning new answer: {final_response_content}")
+        return final_response_content
+    else:
+        # The loop reached its depth limit, and the agent is still paused
+        print(f"AGENT ERROR: Agent is still paused after {loop_limit} iterations.")
+        return "AGENT ERROR: Unable to complete the task due to unconfirmed tool calls."
+
 
 # --- Basic Agent Definition ---
 class BasicAgent:
@@ -136,12 +169,26 @@ class BasicAgent:
         else:
             agent_input = question
 
-        new_answer = reasoning_agent.run(agent_input)
-        new_answer_content = new_answer.content
-        print(f"Agent returning new answer: {new_answer_content}")
+        new_answer_content = _handle_paused_run(reasoning_agent, agent_input)
+
         return new_answer_content
-    
+
+
+# --- Example Calls ---
 
 agent_1 = BasicAgent()
-image_path = Path(__file__).parent.joinpath("temp/image.png")
-answer = agent_1("What color is the hair of the character in the image?", media_path=str(image_path))
+media_path = Path(__file__).parent.joinpath("media_files/7bd855d8-463d-4ed5-93ca-5fe35145f733.xlsx")
+answer = agent_1("The attached Excel file contains the sales of menu items for a local fast-food chain. What were the total sales that the chain made from food (not including drinks)? Express your answer in USD with two decimal places.", media_path=str(media_path))
+print(answer)
+
+# reasoning_agent.print_response("Media: image=/Volumes/Crucial/programming/hf_agents_course/fa1/temp/image.png | Question: What color is the hair of the character in the image?")
+
+# image_path = Path(__file__).parent.joinpath("temp/image.png")
+# media_agent.print_response(
+#     "What color is the hair of the character in the image?",
+#     images=[Image(filepath=image_path)]
+# )
+
+# image_path = Path(__file__).parent.joinpath("temp/image1.png")
+# answer = MediaProcessingTool(str(image_path), "What color is the hair of the character in the image?")
+# print(answer)
