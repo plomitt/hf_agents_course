@@ -8,9 +8,9 @@ import requests
 import inspect
 import pandas as pd
 
+from common import get_latest_answers_data
+
 # from agent import BasicAgent
-from answer_questions import get_latest_answers_data
-from reasoning_agent import create_reasoning_agent, detect_media_type
 
 # (Keep Constants as is)
 # --- Constants ---
