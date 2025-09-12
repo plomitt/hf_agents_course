@@ -1,45 +1,26 @@
+import json
 import os
 from pathlib import Path
+import re
+import time
 import gradio as gr
 import requests
 import inspect
 import pandas as pd
 
-from agent import BasicAgent
+# from agent import BasicAgent
+from answer_questions import get_latest_answers_data
+from reasoning_agent import create_reasoning_agent, detect_media_type
 
 # (Keep Constants as is)
 # --- Constants ---
 DEFAULT_API_URL = "https://agents-course-unit4-scoring.hf.space"
 
-def get_file_path(file_id: str) -> Path:
-    """
-    Returns the absolute path to a file in the 'media_files' directory.
-
-    The file name is assumed to be of the format '<file_id>.*', and there's always
-    only one such file.
-
-    Args:
-        file_id: The ID of the file (e.g., '123').
-
-    Returns:
-        The absolute Path object for the file.
-    """
-    media_files_dir = Path(__file__).parent / 'media_files'
-    
-    # Use glob to find the file whose name contains the ID
-    matching_files = list(media_files_dir.glob(f'{file_id}.*'))
-
-    if not matching_files:
-        print(f"WARNING: No file found with ID '{file_id}' in '{media_files_dir}'")
-        return None
-
-    if len(matching_files) > 1:
-        print(f"WARNING: Multiple files found for ID '{file_id}': {matching_files}")
-        return None
-    
-    print(f"Found file: {matching_files[0]}")
-
-    return matching_files[0]
+def extract_final_answer(text):
+    match = re.search(r"<final_answer>(.*?)</final_answer>", text, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    return 'no final answer found'
 
 def run_and_submit_all( profile: gr.OAuthProfile | None):
     """
@@ -60,13 +41,7 @@ def run_and_submit_all( profile: gr.OAuthProfile | None):
     questions_url = f"{api_url}/questions"
     submit_url = f"{api_url}/submit"
 
-    # 1. Instantiate Agent ( modify this part to create your agent)
-    try:
-        agent = BasicAgent()
-    except Exception as e:
-        print(f"Error instantiating agent: {e}")
-        return f"Error initializing agent: {e}", None
-    # In the case of an app running as a hugging Face space, this link points toward your codebase ( usefull for others so please keep it public)
+    # # In the case of an app running as a hugging Face space, this link points toward your codebase ( usefull for others so please keep it public)
     agent_code = f"https://huggingface.co/spaces/{space_id}/tree/main"
     print(agent_code)
 
@@ -84,9 +59,9 @@ def run_and_submit_all( profile: gr.OAuthProfile | None):
         print(f"Error fetching questions: {e}")
         return f"Error fetching questions: {e}", None
     except requests.exceptions.JSONDecodeError as e:
-         print(f"Error decoding JSON response from questions endpoint: {e}")
-         print(f"Response text: {response.text[:500]}")
-         return f"Error decoding server response for questions: {e}", None
+        print(f"Error decoding JSON response from questions endpoint: {e}")
+        print(f"Response text: {response.text[:500]}")
+        return f"Error decoding server response for questions: {e}", None
     except Exception as e:
         print(f"An unexpected error occurred fetching questions: {e}")
         return f"An unexpected error occurred fetching questions: {e}", None
@@ -107,13 +82,17 @@ def run_and_submit_all( profile: gr.OAuthProfile | None):
             print(f"Skipping item with missing task_id or question: {item}")
             continue
         try:
-            media_path = None
-            if 'https' in question_text or '.' in file_name:
-                media_path = get_file_path(task_id)
+            print(f"Processing question ({counter-1}/{len(questions_data)})")
 
-            submitted_answer = agent(question_text, media_path)
-            answers_payload.append({"task_id": task_id, "submitted_answer": submitted_answer})
-            results_log.append({"Task ID": task_id, "Question": question_text, "Submitted Answer": submitted_answer})
+            answers_data = get_latest_answers_data()
+
+            # Find the corresponding answer for the current task_id
+            final_answer = next((ans["answer"] for ans in answers_data if ans["task_id"] == task_id), None)
+
+            # print(f"Question answer: {final_answer}\n\n")
+
+            answers_payload.append({"task_id": task_id, "submitted_answer": final_answer})
+            results_log.append({"Task ID": task_id, "Question": question_text, "Submitted Answer": final_answer})
         except Exception as e:
              print(f"Error running agent on task {task_id}: {e}")
              results_log.append({"Task ID": task_id, "Question": question_text, "Submitted Answer": f"AGENT ERROR: {e}"})

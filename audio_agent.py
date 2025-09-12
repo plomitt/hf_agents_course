@@ -2,15 +2,15 @@ import os
 from agno.models.openrouter import OpenRouter
 from agno.agent import Agent, RunOutput
 from dotenv import load_dotenv
-from agno.media import Image
+from agno.media import Audio
 
 load_dotenv()
 
 openrouter_api_key = os.environ.get("OPENROUTER_API_KEY")
-image_agent_model_id="openrouter/sonoma-dusk-alpha"
+image_agent_model_id="google/gemini-2.5-flash"
 
 
-def create_image_agent():
+def create_audio_agent():
     media_agent = Agent(
         model=OpenRouter(
             api_key=openrouter_api_key,
@@ -24,13 +24,13 @@ def create_image_agent():
 
 class MediaAgent:
     def __init__(self):
-        self.agent = create_image_agent()
+        self.agent = create_audio_agent()
     
-    def run(self, question: str, image_paths: list[str] = None) -> RunOutput:
-        return self.agent.run(question, images=[Image(filepath=image_path) for image_path in image_paths])
+    def run(self, question: str, audio_paths: list[str] = None) -> RunOutput:
+        return self.agent.run(question, audio=[Audio(filepath=audio_path) for audio_path in audio_paths])
 
 
 if __name__ == "__main__":
     media_agent=MediaAgent()
-    response: RunOutput = media_agent.run("Represent the chess board on the image as a 2D table", image_paths=["media_files/cca530fc-4052-43b2-b130-b30968d8aa44.png"])
+    response: RunOutput = media_agent.run("What is the audio recording about?", audio_paths=["media_files/99c9cc74-fdc8-46c6-8f8d-3ce2d3bfeea3.mp3"])
     print(response.content)

@@ -11,10 +11,14 @@ dependencies = [
     "ddgs (>=9.5.5,<10.0.0)",
     "wikipedia (>=1.4.0,<2.0.0)",
     "arxiv (>=2.2.0,<3.0.0)",
-    "pypdf (>=6.0.0,<7.0.0)"
+    "pypdf (>=6.0.0,<7.0.0)",
+    "gradio[oauth] (>=5.45.0,<6.0.0)"
 ]
 
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.poetry]
+package-mode = false
