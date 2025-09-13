@@ -1,12 +1,70 @@
+from agno.models.openai.like import OpenAILike
+from agno.models.openrouter import OpenRouter
+from agno.models.google import Gemini
+from dotenv import load_dotenv
 from pathlib import Path
 import shutil
 import json
 import os
 
+load_dotenv()
+
+openrouter_api_key = os.environ.get("OPENROUTER_API_KEY")
+
 MEDIA_FILES_DIR = "media_files"
 QUESTIONS_FILEPATH = f"{MEDIA_FILES_DIR}/questions.json"
 ANSWERS_DIR_PATH = f"{MEDIA_FILES_DIR}/answers"
 ANSWERS_PREFIX = "answers_"
+
+def generate_openrouter_model(model_id='google/gemini-2.5-flash-lite', temperature=0.0):
+    return OpenRouter(
+            api_key=openrouter_api_key,
+            id=model_id,
+            temperature=temperature,
+        )
+
+def generate_gemini_model(model_id='gemini-2.5-flash-lite', temperature=0.0):
+    return Gemini(id=model_id, temperature=temperature)
+
+def generate_local_model(model_id='openai/gpt-oss-20b', temperature=0.0):
+    return OpenAILike(
+        id=model_id,
+        api_key="123",
+        base_url="http://192.168.1.157:1234/v1",
+        reasoning_effort="high",
+        temperature=temperature,
+    )
+
+MODELS = {
+    'google_gemini_flash': generate_gemini_model('gemini-2.5-flash'),
+    'google_gemini_flash_lite': generate_gemini_model('gemini-2.5-flash-lite'),
+    'open_gemini_flash': generate_openrouter_model('google/gemini-2.5-flash'),
+    'open_gemini_flash_lite': generate_openrouter_model('google/gemini-2.5-flash-lite'),
+    'open_dusk_alpha': generate_openrouter_model('openrouter/sonoma-dusk-alpha'),
+    'local_oss': generate_local_model('openai/gpt-oss-20b'),
+}
+
+def get_model(id):
+    try:
+        return MODELS[id]
+    except KeyError:
+        raise ValueError(f"Model with id '{id}' not found.")
+
+MEDIA_FILE_PATHS = {
+    'audio1': 'media_files/1f975693-876d-457b-a649-393859e79bf3.mp3',
+    'table1': 'media_files/7bd855d8-463d-4ed5-93ca-5fe35145f733.csv',
+    'video1': 'media_files/9d191bce-651d-4746-be2d-7ef8ecadb9c2.mp4',
+    'audio2': 'media_files/99c9cc74-fdc8-46c6-8f8d-3ce2d3bfeea3.mp3',
+    'video2': 'media_files/a1e91b78-d3d8-4675-bb8d-62741b4b68a6.mp4',
+    'image1': 'media_files/cca530fc-4052-43b2-b130-b30968d8aa44.png',
+    'code1': 'media_files/f918266a-b3e0-4914-865d-4faa564f1aef.py'
+}
+
+def get_media_path(id):
+    try:
+        return MEDIA_FILE_PATHS[id]
+    except KeyError:
+        raise ValueError(f"Media file with id '{id}' not found.")
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".tiff"}
 AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".flac", ".ogg"}
@@ -99,6 +157,22 @@ def get_latest_answers_data():
         answers_data = json.load(f)
     
     return answers_data
+
+def get_latest_answers_last_answered_q_number():
+    answers_data = get_latest_answers_data()
+    answered_q_numbers = [item.get("q_number", 0) for item in answers_data if item.get("answer")]
+
+    if not answered_q_numbers:
+        return 0
+
+    return max(answered_q_numbers)
+
+def is_latest_answers_file_complete():
+    answers_data = get_latest_answers_data()
+    for item in answers_data:
+        if not item.get("answer"):
+            return False
+    return True
 
 def get_new_answers_index():
     latest_index = get_latest_answers_index()
