@@ -1,6 +1,6 @@
 from time import time
 
-from common import create_new_answers_file, get_latest_answers_last_answered_q_number, get_question_prompt, get_question_prompt_with_media, get_questions_data, is_latest_answers_file_complete, is_question_about_media
+from common import create_new_answers_file, get_latest_answers_last_answered_q_number, get_question_prompt, get_question_prompt_with_media, get_questions_data, is_latest_answers_file_complete, is_question_about_media, is_question_answered
 from reasoning_agent import create_reasoning_agent
 
 def get_item_info(item):
@@ -36,26 +36,26 @@ def answer_question(item, counter, total, agent):
     prompt, is_about_media = get_prompt_info(item)
     run_agent_on_q(agent, prompt, is_about_media, counter, total)
 
-def answer_all_questions_from_n(n=1):
+def answer_all_questions():
     question_data = get_questions_data()
     total_questions = len(question_data)
     reasoning_agent = create_reasoning_agent()
     
     for counter, item in enumerate(question_data, start=1):
-        if item.get("q_number", 0) >= n:
+        task_id = item.get("task_id")
+        if not is_question_answered(task_id):
             answer_question(item, counter, total_questions, reasoning_agent)
 
-def answer_all_questions_from_start():
-    answer_all_questions_from_n(1)
+def keep_answering_until_complete(limit=10):
+    for i in range(limit):
+        if is_latest_answers_file_complete():
+            print("All questions have been answered.")
+            break
 
-def continue_answering_all_questions():
-    last_q_number = get_latest_answers_last_answered_q_number()
-    start_q_number = last_q_number + 1
-    answer_all_questions_from_n(start_q_number)
+        answer_all_questions()
 
 if __name__ == "__main__":
     if is_latest_answers_file_complete():
         create_new_answers_file()
-        answer_all_questions_from_start()
-    else:
-        continue_answering_all_questions()
+
+    keep_answering_until_complete()

@@ -167,10 +167,21 @@ def get_latest_answers_last_answered_q_number():
 
     return max(answered_q_numbers)
 
+def is_question_item_answered(question_item):
+    answer = question_item.get("answer", None)
+    return answer is not None and answer != ""
+
+def is_question_answered(task_id):
+    answers_data = get_latest_answers_data()
+    for item in answers_data:
+        if item.get("task_id") == task_id:
+            return is_question_item_answered(item)
+    return False
+
 def is_latest_answers_file_complete():
     answers_data = get_latest_answers_data()
     for item in answers_data:
-        if not item.get("answer"):
+        if not is_question_item_answered(item):
             return False
     return True
 
