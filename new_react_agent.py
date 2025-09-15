@@ -9,6 +9,7 @@ from common import _split_transcript_and_final, csv_to_text, code_to_text, get_f
 from image_agent import image_question_tool
 from audio_agent import audio_question_tool
 
+from next_agent import NextAgent
 from react_agent import ReActAgent, ToolSpec
 from openrouter_client import OpenRouterClient
 
@@ -89,16 +90,16 @@ def add_tools_to_agent(agent: ReActAgent, tools: list[ToolSpec]) -> ReActAgent:
 
 def create_react_agent():
     client = OpenRouterClient(app_name="hf_agents_course")
-    agent = ReActAgent(
+    agent = NextAgent(
         client=client,
-        model='google/gemini-2.5-flash',
-        system_prompt=None,
+        model='qwen/qwen3-next-80b-a3b-thinking',
+        # system_prompt=None,
         keep_history=True,
         temperature=0.1,
         max_rounds=8,
-        max_tool_iters=8,
+        # max_tool_iters=8,
         reasoning_effort='high',
-        parallel_tool_calls=False,
+        # parallel_tool_calls=False,
     )
     
     tools = create_tools()
