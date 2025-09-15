@@ -1,3 +1,5 @@
+from typing import Any, Dict, List
+from urllib.parse import urlparse
 from agno.models.openai.like import OpenAILike
 from agno.models.openrouter import OpenRouter
 from agno.models.google import Gemini
@@ -6,6 +8,12 @@ from pathlib import Path
 import shutil
 import json
 import os
+import ast
+import operator as op
+
+import pandas as pd
+
+from simple_agent import ToolSpec
 
 load_dotenv()
 
@@ -111,8 +119,10 @@ def get_media_file_path(file_id):
 def is_question_about_media(question_text, file_name):
     return 'https' in question_text or '.' in file_name
 
+BASE_REACT_TASK_PROMPT = """The final answer should adhere to the following rules: always answer in the shortest possible form: a single number, a single word, or at most a few words; never explain or elaborate unless explicitly asked; omit punctuation at the end of sentences/words, and omit any units unless explicitly asked; if the answer is a list of items, it should be a comma separated list. If you don't know the answer, or can't process a file type, the final answer should be simply 'idk'."""
+
 def get_question_prompt(task_id, question_text):
-    prompt = f"{question_text}\n\ntask_id='{task_id}'"
+    prompt = f"{question_text}\n\n{BASE_REACT_TASK_PROMPT}"
 
     return prompt
 
@@ -120,7 +130,7 @@ def get_question_prompt_with_media(task_id, question_text):
     media_path = get_media_file_path(task_id)
     media_type = detect_media_type(str(media_path))
 
-    prompt = f"{question_text}\n\n{media_type}_paths=['{str(media_path)}']\n\ntask_id='{task_id}'"
+    prompt = f"{question_text}\n\n{media_type}_paths=['{str(media_path)}']\n\n{BASE_REACT_TASK_PROMPT}\n\nUse the tools at your disposal to answer the question based on the {media_type} file."
 
     return prompt
 
@@ -169,7 +179,7 @@ def get_latest_answers_last_answered_q_number():
 
 def is_question_item_answered(question_item):
     answer = question_item.get("answer", None)
-    return answer is not None and answer != ""
+    return answer is not None and answer != "" and answer != "idk"
 
 def is_question_answered(task_id):
     answers_data = get_latest_answers_data()
@@ -238,3 +248,273 @@ def SubmitFinalAnswer(task_id: str, answer: str):
     print(output)
 
     return output
+
+def get_absolute_path(media_path: str) -> Path:
+    try:
+        return Path(__file__).parent.joinpath(media_path)
+    except Exception as e:
+        error = f"Error getting absolute path: {e}"
+        print(error)
+        return error
+    
+def csv_to_text(args) -> str:
+    """Convert a CSV file to a text representation.
+
+    Args:
+        file_path: The path to the CSV file.
+
+    Returns:
+        str: The text representation of the CSV file.
+    """
+    file_path = args.get("file_path", None)
+    if not file_path:
+        return "No file path provided"
+
+    try:
+        path = get_absolute_path(file_path)
+        print(f"csv_to_text reading file: {str(path)}")
+        df = pd.read_csv(path)
+        return df.to_string()
+    except Exception as e:
+        return f"Error reading CSV file: {e}"
+
+def code_to_text(args) -> str:
+    """Convert a code file to a text representation.
+
+    Args:
+        file_path: The path to the code file.
+
+    Returns:
+        str: The text representation of the code file.
+    """
+    file_path = args.get("file_path", None)
+    if not file_path:
+        return "No file path provided"
+
+    try:
+        path = get_absolute_path(file_path)
+        print(f"code_to_text reading file: {str(path)}")
+        with open(path, 'r') as f:
+            return f.read()
+    except Exception as e:
+        return f"Error reading code file: {e}"
+
+def _split_transcript_and_final(text: str) -> tuple[str, str]:
+    """Return (transcript, final_answer_text) using the last 'Final Answer:' marker."""
+    if not isinstance(text, str) or not text:
+        return "", ""
+    i = text.rfind("Final Answer:")
+    if i < 0:
+        return text, ""
+    return text[:i].rstrip(), text[i + len("Final Answer:"):].strip()
+
+def get_final_answer(answer):
+    transcript, final = _split_transcript_and_final(answer.content)
+    return final
+
+def make_web_search_tool(default_region: str, default_time: str | None, default_max: int) -> ToolSpec:
+    """DuckDuckGo search (via ddgs). Returns compact results."""
+    SERP_HOSTS = {
+        "bing.com", "www.bing.com",
+        "google.com", "www.google.com",
+        "duckduckgo.com", "www.duckduckgo.com",
+        "search.yahoo.com", "yahoo.com", "www.yahoo.com",
+        "startpage.com", "www.startpage.com",
+        "yandex.com", "www.yandex.com", "yandex.ru", "www.yandex.ru",
+        "baidu.com", "www.baidu.com",
+    }
+
+    def _is_serp(url: str) -> bool:
+        try:
+            p = urlparse(url)
+            host = (p.hostname or "").lower()
+            if not host:
+                return False
+            if host in SERP_HOSTS:
+                return True
+            # Common SERP path patterns
+            if any(seg in (p.path or "").lower() for seg in ("/search", "/html", "/lite")) and (
+                host.endswith("google.com") or host.endswith("bing.com") or host.endswith("duckduckgo.com") or host.endswith("yahoo.com")
+            ):
+                return True
+            return False
+        except Exception:
+            return False
+
+    def handler(args: Dict[str, Any]) -> Any:
+        query = str(args.get("query", "")).strip()
+        if not query:
+            return {"error": "empty_query"}
+        
+        print(f"web_search_tool received query: {query}")
+
+        # Use the new ddgs package exclusively
+        try:
+            from ddgs import DDGS  # type: ignore
+        except Exception as e:
+            return {"error": f"ddgs_import_failed: {e}"}
+
+        region = str(args.get("region", default_region) or default_region)
+        timelimit = args.get("time", default_time)
+        max_results = int(args.get("max_results", default_max) or default_max)
+        max_results = max(3, min(max_results, 15))
+
+        out: List[Dict[str, Any]] = []
+        try:
+            with DDGS() as ddg:
+                for r in ddg.text(query, region=region, safesearch="moderate", timelimit=timelimit, max_results=max_results):
+                    url = r.get("href")
+                    if not url or _is_serp(url):
+                        # Skip search engine result pages; they are not sources
+                        continue
+                    out.append({
+                        "title": r.get("title"),
+                        "url": url,
+                        "snippet": r.get("body"),
+                    })
+        except Exception as e:
+            return {"error": f"ddgs_search_failed: {e}", "query": query}
+
+        # If filtering removed everything, still return empty list (let model refine query)
+        return {"query": query, "results": out[:max_results]}
+
+    params: Dict[str, Any] = {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "Search query"},
+            "max_results": {"type": "integer", "minimum": 3, "maximum": 15, "default": default_max},
+            "region": {"type": "string", "default": default_region},
+            "time": {"type": ["string", "null"], "enum": [None, "d", "w", "m", "y"], "default": default_time},
+        },
+        "required": ["query"],
+        "additionalProperties": False,
+    }
+    return ToolSpec(name="web_search", description="Search the web via ddgs (DuckDuckGo) and return top results (title, url, snippet)", parameters=params, handler=handler)
+
+def make_fetch_page_tool(default_max_chars: int) -> ToolSpec:
+    """HTTP GET a URL and extract readable text using BeautifulSoup."""
+    UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+
+    SERP_HOSTS = {
+        "bing.com", "www.bing.com",
+        "google.com", "www.google.com",
+        "duckduckgo.com", "www.duckduckgo.com",
+        "search.yahoo.com", "yahoo.com", "www.yahoo.com",
+        "startpage.com", "www.startpage.com",
+        "yandex.com", "www.yandex.com", "yandex.ru", "www.yandex.ru",
+        "baidu.com", "www.baidu.com",
+    }
+
+    def _is_serp(url: str) -> bool:
+        try:
+            p = urlparse(url)
+            host = (p.hostname or "").lower()
+            if not host:
+                return False
+            if host in SERP_HOSTS:
+                return True
+            if any(seg in (p.path or "").lower() for seg in ("/search", "/html", "/lite")) and (
+                host.endswith("google.com") or host.endswith("bing.com") or host.endswith("duckduckgo.com") or host.endswith("yahoo.com")
+            ):
+                return True
+            return False
+        except Exception:
+            return False
+
+    def _extract_text(html: str) -> str:
+        try:
+            from bs4 import BeautifulSoup  # local import
+        except Exception:
+            return ""
+        soup = BeautifulSoup(html, "html.parser")
+        for tag in soup(["script", "style", "noscript"]):
+            tag.decompose()
+        parts: List[str] = []
+        # Prefer headings and paragraphs to keep it compact
+        for sel in ["h1", "h2", "h3", "p", "li"]:
+            for el in soup.select(sel):
+                text = (el.get_text(" ", strip=True) or "").strip()
+                if text:
+                    parts.append(text)
+        text = "\n".join(parts)
+        # Collapse whitespace
+        return "\n".join(line.strip() for line in text.splitlines() if line.strip())
+
+    def handler(args: Dict[str, Any]) -> Any:
+        import requests
+        url = str(args.get("url", "")).strip()
+        if not url:
+            return {"error": "empty_url"}
+        
+        print(f"fetch_page_tool received url: {url}")
+
+        # Block fetching search engine result pages to avoid garbage content
+        if _is_serp(url):
+            return {"error": "blocked_serp_url", "url": url}
+        max_chars = int(args.get("max_chars", default_max_chars) or default_max_chars)
+        max_chars = max(1000, min(max_chars, 15000))
+        try:
+            resp = requests.get(url, timeout=15, headers={"User-Agent": UA})
+            resp.raise_for_status()
+        except Exception as e:
+            return {"error": f"fetch_failed: {e}", "url": url}
+
+        title = None
+        try:
+            from bs4 import BeautifulSoup  # type: ignore
+            soup = BeautifulSoup(resp.text, "html.parser")
+            if soup.title and soup.title.string:
+                title = soup.title.string.strip()
+        except Exception:
+            title = None
+
+        text = _extract_text(resp.text)
+        if len(text) > max_chars:
+            text = text[:max_chars]
+        return {"url": url, "title": title, "text": text, "length": len(text)}
+
+    params: Dict[str, Any] = {
+        "type": "object",
+        "properties": {
+            "url": {"type": "string", "description": "Page URL to fetch"},
+            "max_chars": {"type": "integer", "minimum": 1000, "maximum": 15000, "default": default_max_chars},
+        },
+        "required": ["url"],
+        "additionalProperties": False,
+    }
+    return ToolSpec(name="fetch_page", description="Fetch a web page and return cleaned text (capped by max_chars)", parameters=params, handler=handler)
+
+def make_calc_tool() -> ToolSpec:
+    """Create a safe calculator tool using a tiny AST evaluator."""
+    allowed = {
+        ast.Add: op.add, ast.Sub: op.sub, ast.Mult: op.mul, ast.Div: op.truediv,
+        ast.Pow: op.pow, ast.Mod: op.mod, ast.USub: op.neg, ast.UAdd: op.pos,
+    }
+
+    def _eval(node):
+        if isinstance(node, ast.Num):  # type: ignore[attr-defined]
+            return node.n
+        if isinstance(node, ast.UnaryOp) and type(node.op) in (ast.UAdd, ast.USub):
+            return allowed[type(node.op)](_eval(node.operand))
+        if isinstance(node, ast.BinOp) and type(node.op) in allowed:
+            return allowed[type(node.op)](_eval(node.left), _eval(node.right))
+        raise ValueError("unsupported expression")
+
+    def handler(args):
+        expr = str(args.get("expression", "")).strip()
+        if not expr:
+            return {"error": "empty_expression"}
+        try:
+            tree = ast.parse(expr, mode="eval")
+            val = _eval(tree.body)  # type: ignore[arg-type]
+            return {"expression": expr, "value": val}
+        except Exception as e:
+            return {"error": str(e)}
+
+    params = {
+        "type": "object",
+        "properties": {"expression": {"type": "string", "description": "Arithmetic expression"}},
+        "required": ["expression"],
+        "additionalProperties": False,
+    }
+    return ToolSpec(name="calc", description="Evaluate basic arithmetic expression and return a JSON result", parameters=params, handler=handler)
