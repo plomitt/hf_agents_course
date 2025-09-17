@@ -45,4 +45,4 @@ def image_question_tool(args):
 
 if __name__ == "__main__":
     image_agent = create_image_agent()
-    # image_agent.print_response("Represent the chess board on the image as a 2D table",  images=[Image(filepath=get_media_path('image1'))], stream=True, show_tool_calls=True, show_full_reasoning=True)
+    image_agent.print_response("Represent the chess board on the image as a 2D table",  images=[Image(filepath=get_media_path('image1'))], stream=True, show_tool_calls=True, show_full_reasoning=True)
